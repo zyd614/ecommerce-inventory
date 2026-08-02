@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>电商库存台账</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main id="loginView" class="login-shell hidden">
+      <section class="login-panel">
+        <p class="eyebrow">Inventory Ledger</p>
+        <h1>电商库存台账</h1>
+        <p class="muted">登录后查看商品库存。</p>
+        <form id="loginForm" class="stack">
+          <label>
+            <span>管理密码</span>
+            <input id="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button class="primary" type="submit">登录</button>
+        </form>
+      </section>
+    </main>
+
+    <main id="appView" class="app-shell hidden">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Inventory Ledger</p>
+          <h1>商品库存展示</h1>
+        </div>
+        <div class="topbar-actions">
+          <button id="newProductBtn" class="primary" type="button">新品入库</button>
+          <a class="ghost" href="/api/export/products.csv">导出商品</a>
+          <a class="ghost" href="/api/export/movements.csv">导出流水</a>
+          <button id="changePasswordBtn" class="ghost" type="button">修改密码</button>
+          <button id="logoutBtn" class="ghost" type="button">退出</button>
+        </div>
+      </header>
+
+      <section class="metrics" aria-label="库存概览">
+        <article><span>商品数</span><strong id="metricProducts">0</strong></article>
+        <article class="focus-metric"><span>当前库存</span><strong id="metricStock">0</strong></article>
+        <article><span>累计进货</span><strong id="metricIn">0</strong></article>
+        <article><span>累计发货</span><strong id="metricOut">0</strong></article>
+        <article class="danger-metric"><span>低库存组合</span><strong id="metricLow">0</strong></article>
+      </section>
+
+      <section id="alertBox" class="alert hidden"></section>
+
+      <section class="surface inventory-page">
+        <div class="section-head inventory-head">
+          <div>
+            <p class="eyebrow">Products</p>
+            <h2>库存展示</h2>
+          </div>
+          <div class="inventory-actions">
+            <input id="productSearch" type="search" placeholder="按商品名称 / SKU / 规格搜索" />
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="products-table">
+            <thead>
+              <tr>
+                <th>商品 / SKU</th>
+                <th>规格分支</th>
+                <th>当前库存</th>
+                <th>累计进 / 发</th>
+                <th>功能</th>
+              </tr>
+            </thead>
+            <tbody id="productsTable"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="productModal" class="modal-backdrop hidden" aria-modal="true" role="dialog">
+        <div class="modal">
+          <div class="modal-head">
+            <div><p class="eyebrow">Product</p><h2 id="productModalTitle">新品入库</h2></div>
+            <button class="ghost icon-btn" type="button" data-close-modal>关闭</button>
+          </div>
+
+          <form id="productForm" class="grid-form">
+            <input type="hidden" id="productId" />
+            <label>
+              <span>SKU</span>
+              <input id="sku" readonly placeholder="系统自动生成" />
+            </label>
+            <label id="initialStockLabel">
+              <span>无规格商品初始库存</span>
+              <input id="initialStock" type="number" min="0" value="0" required />
+            </label>
+            <div class="span-2 image-field">
+              <label><span>商品图片</span><input id="productImage" type="file" accept="image/*" /></label>
+              <div id="imagePasteZone" class="image-paste-zone" tabindex="0">
+                <div><strong id="imagePasteText">选择文件或直接粘贴图片</strong><span>复制商品图后，在这里按 Ctrl+V</span></div>
+                <img id="imagePreview" class="image-preview hidden" alt="商品图片预览" />
+              </div>
+            </div>
+            <label><span>商品名称</span><input id="name" placeholder="不填则使用 SKU" /></label>
+            <label><span>单位</span><input id="unit" value="件" required /></label>
+
+            <div class="span-2 variant-config">
+              <div class="field-head">
+                <span>主规格</span>
+                <button id="addMainSpecValueBtn" class="ghost small-btn" type="button">添加主规格值</button>
+              </div>
+              <div class="variant-config-grid">
+                <input id="mainSpecName" placeholder="主规格名称，例如颜色" />
+                <div id="mainSpecRows" class="manual-spec-rows"></div>
+              </div>
+            </div>
+            <div id="subSpecSection" class="span-2 variant-config hidden">
+              <div class="field-head">
+                <span>子规格</span>
+                <button id="addSubSpecValueBtn" class="ghost small-btn" type="button">添加子规格值</button>
+              </div>
+              <div class="variant-config-grid">
+                <input id="subSpecName" placeholder="子规格名称，例如尺码" />
+                <div id="subSpecRows" class="manual-spec-rows"></div>
+              </div>
+            </div>
+            <div id="addSubSpecPrompt" class="span-2 add-sub-spec-prompt">
+              <button id="enableSubSpecBtn" class="ghost" type="button">添加子规格</button>
+              <span class="subtle">只有需要颜色 + 尺码等组合时才添加</span>
+            </div>
+            <div class="span-2 variant-stock-field">
+              <div class="field-head"><span>规格组合初始库存</span><span class="subtle">每个组合单独填写数量</span></div>
+              <div id="variantStockRows" class="variant-stock-rows"></div>
+            </div>
+            <label><span>低库存阈值</span><input id="lowStock" type="number" min="0" value="5" required /></label>
+            <label><span>日期</span><input id="productHappenedAt" type="date" required /></label>
+            <label class="span-2"><span>备注</span><input id="productNote" placeholder="供应商或其他说明" /></label>
+            <div class="form-actions">
+              <button id="cancelProductEdit" class="ghost hidden" type="button">取消编辑</button>
+              <button id="productSaveBtn" class="primary" type="submit">保存并入库</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section id="passwordModal" class="modal-backdrop hidden" aria-modal="true" role="dialog">
+        <div class="modal password-modal">
+          <div class="modal-head">
+            <div><p class="eyebrow">Account Security</p><h2>修改登录密码</h2></div>
+            <button class="ghost icon-btn" type="button" data-close-modal>关闭</button>
+          </div>
+          <form id="passwordForm" class="grid-form">
+            <label class="span-2"><span>当前密码</span><input id="currentPassword" type="password" autocomplete="current-password" required /></label>
+            <label><span>新密码</span><input id="newPassword" type="password" minlength="6" autocomplete="new-password" required /></label>
+            <label><span>确认新密码</span><input id="confirmPassword" type="password" minlength="6" autocomplete="new-password" required /></label>
+            <p class="span-2 subtle">新密码至少 6 位，保存后立即生效。</p>
+            <div class="form-actions"><button class="primary" type="submit">保存新密码</button></div>
+          </form>
+        </div>
+      </section>
+
+      <section id="movementModal" class="modal-backdrop hidden" aria-modal="true" role="dialog">
+        <div class="modal">
+          <div class="modal-head">
+            <div><p class="eyebrow">Stock Function</p><h2 id="movementModalTitle">进货加库存</h2></div>
+            <button class="ghost icon-btn" type="button" data-close-modal>关闭</button>
+          </div>
+          <div class="segmented modal-segmented" role="tablist" aria-label="库存功能">
+            <button id="typeIn" class="active" type="button">进货 +</button>
+            <button id="typeOut" type="button">发货 -</button>
+          </div>
+          <form id="movementForm" class="grid-form">
+            <label class="span-2"><span>商品</span><select id="movementProduct" required></select></label>
+            <label class="span-2"><span>规格组合</span><select id="movementVariant" required></select></label>
+            <label><span>数量</span><input id="quantity" type="number" min="1" value="1" required /></label>
+            <label><span>日期</span><input id="happenedAt" type="date" required /></label>
+            <label><span>单价</span><input id="unitPrice" type="number" min="0" step="0.01" placeholder="选填" /></label>
+            <label><span>单号</span><input id="reference" placeholder="采购单号 / 订单号" /></label>
+            <label class="span-2"><span>备注</span><input id="movementNote" placeholder="选填" /></label>
+            <div class="form-actions"><button id="movementSubmit" class="primary" type="submit">加库存</button></div>
+          </form>
+        </div>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

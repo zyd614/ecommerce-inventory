@@ -1,0 +1,15 @@
+services:
+  inventory:
+    build: .
+    container_name: ecommerce-inventory
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      ADMIN_PASSWORD: "change-me"
+      SECRET_KEY: "change-this-random-secret"
+      DATABASE_PATH: "/app/data/inventory.db"
+      UPLOAD_DIR: "/app/data/uploads"
+      MAX_UPLOAD_MB: "8"
+    volumes:
+      - ./data:/app/data
