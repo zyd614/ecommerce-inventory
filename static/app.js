@@ -196,28 +196,62 @@ function setVariantImageFile(key, file) {
 }
 function renderProducts() {
   els.productsTable.innerHTML = "";
-  if (!state.products.length) { els.productsTable.innerHTML = `<tr><td class="empty" colspan="5">还没有商品，点击“新品入库”添加第一个 SKU。</td></tr>`; return; }
+  if (!state.products.length) {
+    els.productsTable.innerHTML = `<tr><td class="empty" colspan="6">还没有商品，点击“新品入库”添加第一个 SKU。</td></tr>`;
+    return;
+  }
+
   for (const product of state.products) {
-    const variants = product.variants?.length ? product.variants : [{ id: "", main_spec: "", sub_spec: "default", stock: product.stock, total_in: product.total_in, total_out: product.total_out }];
-    variants.forEach((variant, index) => {
-      const isLow = Number(variant.stock) <= Number(product.low_stock_threshold);
-      const tr = document.createElement("tr"); tr.className = isLow ? "low-row" : "";
-      const productCell = index === 0 ? `
-        <td class="product-group-cell" rowspan="${variants.length}">
-          <div class="product-main">${productImageMarkup(product)}<div><div class="product-name">${escapeHtml(product.name)}</div><div class="sku">${escapeHtml(product.sku)}</div><div class="subtle">${escapeHtml(product.note || "")}</div></div></div>
-          <div class="product-total">商品总库存 <strong>${formatNumber(product.stock)}${escapeHtml(product.unit)}</strong></div>
-          <div class="row-actions product-actions"><button class="ghost" type="button" data-action="edit-product" data-id="${product.id}">编辑商品</button><button class="danger" type="button" data-action="delete-product" data-id="${product.id}">删除商品</button></div>
-        </td>` : "";
-      const branchParts = [variant.main_spec, variant.sub_spec].filter((value) => value && value !== "default");
-      const branchMarkup = branchParts.length ? branchParts.map((value) => `<span class="spec-value-badge">${escapeHtml(value)}</span>`).join(`<span class="variant-branch-separator">/</span>`) : `<span class="spec-value-badge">默认规格</span>`;
-      const variantImage = branchParts.length ? (variant.image_url || product.image_url) : null;
-      const variantImageMarkup = variantImage ? `<img class="variant-thumb" src="${escapeHtml(variantImage)}" alt="${escapeHtml(variantLabel(variant))}" loading="lazy" />` : (branchParts.length ? `<div class="variant-thumb variant-thumb-empty">无图</div>` : "");
-      tr.innerHTML = `${productCell}
-        <td><div class="variant-branch-cell">${variantImageMarkup}<div class="variant-branch">${branchMarkup}</div></div></td>
-        <td><div class="stock-count ${isLow ? "low" : ""}">${formatNumber(variant.stock)}${escapeHtml(product.unit)}</div><div class="subtle">阈值 ${formatNumber(product.low_stock_threshold)}</div></td>
-        <td>${formatNumber(variant.total_in)} / ${formatNumber(variant.total_out)}</td>
-        <td><div class="row-actions"><button class="ghost" type="button" data-action="stock-in" data-id="${product.id}" data-variant-id="${variant.id}">进货 +</button><button class="ghost" type="button" data-action="stock-out" data-id="${product.id}" data-variant-id="${variant.id}">发货 -</button></div></td>`;
-      els.productsTable.appendChild(tr);
+    const variants = product.variants?.length
+      ? product.variants
+      : [{ id: "", main_spec: "", sub_spec: "default", stock: product.stock, total_in: product.total_in, total_out: product.total_out }];
+    const mainGroups = [];
+    const groupByMainSpec = new Map();
+
+    for (const variant of variants) {
+      const mainKey = variant.main_spec || "";
+      if (!groupByMainSpec.has(mainKey)) {
+        const group = { mainSpec: mainKey, variants: [] };
+        groupByMainSpec.set(mainKey, group);
+        mainGroups.push(group);
+      }
+      groupByMainSpec.get(mainKey).variants.push(variant);
+    }
+
+    let productRowIndex = 0;
+    mainGroups.forEach((group, groupIndex) => {
+      group.variants.forEach((variant, groupRowIndex) => {
+        const isLow = Number(variant.stock) <= Number(product.low_stock_threshold);
+        const tr = document.createElement("tr");
+        tr.className = [isLow ? "low-row" : "", groupRowIndex === 0 && groupIndex > 0 ? "main-spec-group-split" : ""].filter(Boolean).join(" ");
+        const productCell = productRowIndex === 0 ? `
+          <td class="product-group-cell" rowspan="${variants.length}">
+            <div class="product-main">${productImageMarkup(product)}<div><div class="product-name">${escapeHtml(product.name)}</div><div class="sku">${escapeHtml(product.sku)}</div><div class="subtle">${escapeHtml(product.note || "")}</div></div></div>
+            <div class="product-total">商品总库存 <strong>${formatNumber(product.stock)}${escapeHtml(product.unit)}</strong></div>
+            <div class="row-actions product-actions"><button class="ghost" type="button" data-action="edit-product" data-id="${product.id}">编辑商品</button><button class="danger" type="button" data-action="delete-product" data-id="${product.id}">删除商品</button></div>
+          </td>` : "";
+        const mainSpecCell = groupRowIndex === 0 ? `
+          <td class="main-spec-group-cell" rowspan="${group.variants.length}">
+            <span class="main-spec-value">${escapeHtml(group.mainSpec || "默认规格")}</span>
+            ${group.variants.length > 1 ? `<span class="main-spec-count">${group.variants.length} 个子规格</span>` : ""}
+          </td>` : "";
+        const hasSubSpec = variant.sub_spec && variant.sub_spec !== "default";
+        const variantImage = (variant.main_spec || hasSubSpec) ? (variant.image_url || product.image_url) : null;
+        const variantImageMarkup = variantImage
+          ? `<img class="variant-thumb" src="${escapeHtml(variantImage)}" alt="${escapeHtml(variantLabel(variant))}" loading="lazy" />`
+          : ((variant.main_spec || hasSubSpec) ? `<div class="variant-thumb variant-thumb-empty">无图</div>` : "");
+        const subSpecMarkup = hasSubSpec
+          ? `<span class="sub-spec-value">${escapeHtml(variant.sub_spec)}</span>`
+          : `<span class="sub-spec-empty">单规格</span>`;
+
+        tr.innerHTML = `${productCell}${mainSpecCell}
+          <td class="sub-spec-cell"><div class="variant-branch-cell">${variantImageMarkup}<div class="variant-branch">${subSpecMarkup}</div></div></td>
+          <td class="stock-cell"><div class="stock-count ${isLow ? "low" : ""}">${formatNumber(variant.stock)}${escapeHtml(product.unit)}</div><div class="subtle">阈值 ${formatNumber(product.low_stock_threshold)}</div></td>
+          <td class="flow-cell">${formatNumber(variant.total_in)} / ${formatNumber(variant.total_out)}</td>
+          <td class="function-cell"><div class="row-actions"><button class="ghost" type="button" data-action="stock-in" data-id="${product.id}" data-variant-id="${variant.id}">进货 +</button><button class="ghost" type="button" data-action="stock-out" data-id="${product.id}" data-variant-id="${variant.id}">发货 -</button></div></td>`;
+        els.productsTable.appendChild(tr);
+        productRowIndex += 1;
+      });
     });
   }
 }
