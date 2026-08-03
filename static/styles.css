@@ -321,6 +321,13 @@ input[readonly] {
   font-size: 13px;
 }
 
+.field-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .spec-rows {
   display: grid;
   gap: 8px;
@@ -332,15 +339,10 @@ input[readonly] {
   gap: 10px;
 }
 
-.variant-config-grid {
-  display: grid;
-  grid-template-columns: minmax(150px, 0.7fr) minmax(0, 1.3fr);
-  gap: 8px;
-}
 
 .variant-stock-rows {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   padding: 10px;
   background: #f7f9fa;
@@ -349,14 +351,56 @@ input[readonly] {
 }
 
 .variant-stock-row {
-  grid-template-columns: minmax(0, 1fr) 100px;
-  align-items: center;
-  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 96px minmax(180px, 1.2fr);
+  align-items: end;
+  gap: 10px;
   color: var(--text);
 }
 
-.variant-stock-row span {
+.variant-stock-identity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.variant-stock-identity span {
   overflow-wrap: anywhere;
+}
+
+.variant-quantity-field,
+.variant-image-field {
+  min-width: 0;
+}
+
+.variant-image-field input {
+  font-size: 11px;
+}
+
+.variant-upload-preview {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  object-fit: cover;
+  background: #f4f6f7;
+}
+
+.variant-upload-empty {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
 }
 
 .manual-spec-rows {
@@ -462,12 +506,36 @@ input[readonly] {
   margin-top: 12px;
 }
 
+.variant-branch-cell {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
 .variant-branch {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 4px;
   font-size: 11px;
+}
+
+.variant-thumb {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  object-fit: cover;
+  background: #f4f6f7;
+}
+
+.variant-thumb-empty {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 10px;
 }
 
 .variant-branch-separator {
@@ -807,9 +875,13 @@ button.danger {
     align-items: stretch;
   }
 
-  .variant-config-grid,
   .variant-stock-rows {
     grid-template-columns: 1fr;
+  }
+
+  .variant-stock-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 
   .modal {

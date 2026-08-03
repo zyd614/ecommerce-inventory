@@ -1,4 +1,4 @@
-﻿import csv
+import csv
 import io
 import json
 import os
@@ -73,6 +73,7 @@ def init_db():
                 main_spec TEXT NOT NULL DEFAULT '',
                 sub_spec TEXT NOT NULL DEFAULT '',
                 variant_key TEXT NOT NULL,
+                image_filename TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(product_id, variant_key),
@@ -102,6 +103,9 @@ def init_db():
         if "variant_id" not in movement_columns:
             db.execute("ALTER TABLE movements ADD COLUMN variant_id INTEGER")
         db.execute("CREATE INDEX IF NOT EXISTS idx_movements_variant_id ON movements(variant_id)")
+        variant_columns = {row["name"] for row in db.execute("PRAGMA table_info(product_variants)").fetchall()}
+        if "image_filename" not in variant_columns:
+            db.execute("ALTER TABLE product_variants ADD COLUMN image_filename TEXT")
         migrate_legacy_variants(db)
 
 
@@ -242,6 +246,7 @@ def variant_rows(db, product_id):
             v.main_spec,
             v.sub_spec,
             v.variant_key,
+            v.image_filename,
             COALESCE(SUM(CASE WHEN m.type = 'in' THEN m.quantity ELSE 0 END), 0) AS total_in,
             COALESCE(SUM(CASE WHEN m.type = 'out' THEN m.quantity ELSE 0 END), 0) AS total_out,
             COALESCE(SUM(CASE WHEN m.type = 'in' THEN m.quantity ELSE -m.quantity END), 0) AS stock
@@ -253,7 +258,12 @@ def variant_rows(db, product_id):
         """,
         (product_id,),
     ).fetchall()
-    return [row_to_dict(row) for row in rows]
+    variants = []
+    for row in rows:
+        variant = row_to_dict(row)
+        variant["image_url"] = f"/uploads/{variant['image_filename']}" if variant.get("image_filename") else None
+        variants.append(variant)
+    return variants
 
 
 def attach_variants(db, product):
@@ -361,20 +371,55 @@ def request_payload():
     return request.get_json(force=True, silent=True) or {}
 
 
-def save_product_image():
-    image = request.files.get("image")
+def image_extension(image):
     if image is None or not image.filename:
         return None
-
     safe_name = secure_filename(image.filename)
     extension = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
     if extension not in ALLOWED_IMAGE_EXTENSIONS:
         raise ValueError("图片只能上传 JPG、PNG、WebP 或 GIF")
+    return extension
 
+
+def save_uploaded_image(field_name):
+    image = request.files.get(field_name)
+    extension = image_extension(image)
+    if extension is None:
+        return None
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     filename = f"{uuid.uuid4().hex}.{extension}"
     image.save(os.path.join(UPLOAD_DIR, filename))
     return filename
+
+
+def parse_variant_image_fields(value, variant_defs):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            value = {}
+    if not isinstance(value, dict):
+        return {}
+
+    valid_keys = {variant_key(item["main_spec"], item["sub_spec"]) for item in variant_defs}
+    return {
+        clean_text(field_name): clean_text(key)
+        for field_name, key in value.items()
+        if clean_text(field_name).startswith("variant_image_") and clean_text(key) in valid_keys
+    }
+
+
+def validate_image_fields(field_names):
+    for field_name in field_names:
+        image_extension(request.files.get(field_name))
+
+
+def save_variant_images(image_fields):
+    return {
+        key: filename
+        for field_name, key in image_fields.items()
+        if (filename := save_uploaded_image(field_name))
+    }
 
 
 def delete_product_image(filename):
@@ -537,28 +582,24 @@ def create_product():
     note = clean_text(payload.get("note"))
     happened_at = clean_text(payload.get("happened_at")) or datetime.now().strftime("%Y-%m-%d")
     config = parse_variant_config(payload.get("variant_config"))
-    legacy_specs = parse_specs(payload.get("specs"))
-    if not config["main_values"] and not config["sub_values"] and legacy_specs:
-        config = {
-            "main_spec_name": legacy_specs[0].get("name", ""),
-            "main_values": [legacy_specs[0].get("value", "")],
-            "sub_spec_name": legacy_specs[1].get("name", "") if len(legacy_specs) > 1 else "",
-            "sub_values": [legacy_specs[1].get("value", "default")] if len(legacy_specs) > 1 else ["default"],
-        }
+    variant_defs = build_variant_defs(config)
+    image_fields = parse_variant_image_fields(payload.get("variant_image_keys"), variant_defs)
 
     try:
         low_stock_threshold = parse_int(payload.get("low_stock_threshold", 5), "低库存阈值", 0)
-        image_filename = save_product_image()
+        initial_stock_default = parse_int(payload.get("initial_stock", 0), "新品入库数量", 0)
+        initial_stocks = parse_variant_initial_stocks(
+            payload.get("variant_stocks"),
+            variant_defs,
+            default_value=initial_stock_default if not config["main_values"] and not config["sub_values"] else 0,
+        )
+        validate_image_fields(["image", *image_fields])
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
-    variant_defs = build_variant_defs(config)
-    initial_stock_default = parse_int(payload.get("initial_stock", 0), "新品入库数量", 0)
-    initial_stocks = parse_variant_initial_stocks(
-        payload.get("variant_stocks"),
-        variant_defs,
-        default_value=initial_stock_default if not config["main_values"] and not config["sub_values"] else 0,
-    )
+    image_filename = save_uploaded_image("image")
+    variant_images = save_variant_images(image_fields)
+    saved_images = [filename for filename in [image_filename, *variant_images.values()] if filename]
 
     try:
         with get_db() as db:
@@ -567,17 +608,18 @@ def create_product():
             cur = db.execute(
                 """
                 INSERT INTO products (sku, name, unit, low_stock_threshold, note, image_filename, specs_json, main_spec_name, sub_spec_name, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, ?, ?, '', '', CURRENT_TIMESTAMP)
                 """,
-                (sku, name, unit, low_stock_threshold, note, image_filename, json.dumps(config, ensure_ascii=False), config["main_spec_name"], config["sub_spec_name"]),
+                (sku, name, unit, low_stock_threshold, note, image_filename, json.dumps(config, ensure_ascii=False)),
             )
             product_id = cur.lastrowid
             for definition in variant_defs:
+                key = variant_key(definition["main_spec"], definition["sub_spec"])
                 variant_cur = db.execute(
-                    "INSERT INTO product_variants (product_id, main_spec, sub_spec, variant_key) VALUES (?, ?, ?, ?)",
-                    (product_id, definition["main_spec"], definition["sub_spec"], variant_key(definition["main_spec"], definition["sub_spec"])),
+                    "INSERT INTO product_variants (product_id, main_spec, sub_spec, variant_key, image_filename) VALUES (?, ?, ?, ?, ?)",
+                    (product_id, definition["main_spec"], definition["sub_spec"], key, variant_images.get(key)),
                 )
-                quantity = initial_stocks.get(variant_key(definition["main_spec"], definition["sub_spec"]), 0)
+                quantity = initial_stocks.get(key, 0)
                 if quantity > 0:
                     db.execute(
                         "INSERT INTO movements (product_id, variant_id, type, quantity, reference, note, happened_at) VALUES (?, ?, 'in', ?, ?, ?, ?)",
@@ -585,7 +627,8 @@ def create_product():
                     )
             product = product_listing(db, "WHERE p.id = ?", (product_id,))[0]
     except sqlite3.IntegrityError:
-        delete_product_image(image_filename)
+        for filename in saved_images:
+            delete_product_image(filename)
         return jsonify({"error": "这个 SKU 已经存在"}), 409
 
     return jsonify(product), 201
@@ -599,37 +642,62 @@ def update_product(product_id):
     unit = clean_text(payload.get("unit")) or "件"
     note = clean_text(payload.get("note"))
     config = parse_variant_config(payload.get("variant_config"))
+    variant_defs = build_variant_defs(config)
+    image_fields = parse_variant_image_fields(payload.get("variant_image_keys"), variant_defs)
+
     try:
         low_stock_threshold = parse_int(payload.get("low_stock_threshold", 0), "低库存阈值", 0)
-        new_image_filename = save_product_image()
+        validate_image_fields(["image", *image_fields])
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+    new_image_filename = save_uploaded_image("image")
+    variant_images = save_variant_images(image_fields)
+    saved_images = [filename for filename in [new_image_filename, *variant_images.values()] if filename]
+    old_variant_images_to_delete = []
 
     try:
         with get_db() as db:
             existing = db.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
             if existing is None:
-                delete_product_image(new_image_filename)
+                for filename in saved_images:
+                    delete_product_image(filename)
                 return jsonify({"error": "商品不存在"}), 404
+
             sku = existing["sku"]
             name = name or sku
             image_filename = new_image_filename or existing["image_filename"]
             db.execute(
-                "UPDATE products SET name = ?, unit = ?, low_stock_threshold = ?, note = ?, image_filename = ?, specs_json = ?, main_spec_name = ?, sub_spec_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (name, unit, low_stock_threshold, note, image_filename, json.dumps(config, ensure_ascii=False), config["main_spec_name"], config["sub_spec_name"], product_id),
+                "UPDATE products SET name = ?, unit = ?, low_stock_threshold = ?, note = ?, image_filename = ?, specs_json = ?, main_spec_name = '', sub_spec_name = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (name, unit, low_stock_threshold, note, image_filename, json.dumps(config, ensure_ascii=False), product_id),
             )
-            existing_variants = {row["variant_key"]: row for row in db.execute("SELECT * FROM product_variants WHERE product_id = ?", (product_id,)).fetchall()}
-            for definition in build_variant_defs(config):
+            existing_variants = {
+                row["variant_key"]: row
+                for row in db.execute("SELECT * FROM product_variants WHERE product_id = ?", (product_id,)).fetchall()
+            }
+            for definition in variant_defs:
                 key = variant_key(definition["main_spec"], definition["sub_spec"])
                 if key not in existing_variants:
-                    db.execute("INSERT INTO product_variants (product_id, main_spec, sub_spec, variant_key) VALUES (?, ?, ?, ?)", (product_id, definition["main_spec"], definition["sub_spec"], key))
+                    db.execute(
+                        "INSERT INTO product_variants (product_id, main_spec, sub_spec, variant_key, image_filename) VALUES (?, ?, ?, ?, ?)",
+                        (product_id, definition["main_spec"], definition["sub_spec"], key, variant_images.get(key)),
+                    )
+                elif key in variant_images:
+                    db.execute(
+                        "UPDATE product_variants SET image_filename = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (variant_images[key], existing_variants[key]["id"]),
+                    )
+                    old_variant_images_to_delete.append(existing_variants[key]["image_filename"])
             product = product_listing(db, "WHERE p.id = ?", (product_id,))[0]
     except sqlite3.IntegrityError:
-        delete_product_image(new_image_filename)
+        for filename in saved_images:
+            delete_product_image(filename)
         return jsonify({"error": "保存失败，请检查商品数据或 SKU"}), 409
 
     if new_image_filename:
         delete_product_image(existing["image_filename"])
+    for filename in old_variant_images_to_delete:
+        delete_product_image(filename)
     return jsonify(product)
 
 
@@ -640,6 +708,10 @@ def delete_product(product_id):
         product = db.execute("SELECT image_filename FROM products WHERE id = ?", (product_id,)).fetchone()
         if product is None:
             return jsonify({"error": "商品不存在"}), 404
+        variant_images = [
+            row["image_filename"]
+            for row in db.execute("SELECT image_filename FROM product_variants WHERE product_id = ?", (product_id,)).fetchall()
+        ]
 
         movement_count = db.execute(
             "SELECT COUNT(*) AS count FROM movements WHERE product_id = ?", (product_id,)
@@ -650,8 +722,9 @@ def delete_product(product_id):
         db.execute("DELETE FROM products WHERE id = ?", (product_id,))
 
     delete_product_image(product["image_filename"])
+    for filename in variant_images:
+        delete_product_image(filename)
     return jsonify({"ok": True})
-
 
 @app.get("/api/movements")
 @require_auth

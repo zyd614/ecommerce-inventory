@@ -103,30 +103,27 @@
 
             <div class="span-2 variant-config">
               <div class="field-head">
-                <span>主规格</span>
+                <span>主规格值</span>
                 <button id="addMainSpecValueBtn" class="ghost small-btn" type="button">添加主规格值</button>
               </div>
-              <div class="variant-config-grid">
-                <input id="mainSpecName" placeholder="主规格名称，例如颜色" />
-                <div id="mainSpecRows" class="manual-spec-rows"></div>
-              </div>
+              <div id="mainSpecRows" class="manual-spec-rows"></div>
             </div>
             <div id="subSpecSection" class="span-2 variant-config hidden">
               <div class="field-head">
-                <span>子规格</span>
-                <button id="addSubSpecValueBtn" class="ghost small-btn" type="button">添加子规格值</button>
+                <span>子规格值</span>
+                <div class="field-actions">
+                  <button id="disableSubSpecBtn" class="ghost small-btn" type="button">移除子规格</button>
+                  <button id="addSubSpecValueBtn" class="ghost small-btn" type="button">添加子规格值</button>
+                </div>
               </div>
-              <div class="variant-config-grid">
-                <input id="subSpecName" placeholder="子规格名称，例如尺码" />
-                <div id="subSpecRows" class="manual-spec-rows"></div>
-              </div>
+              <div id="subSpecRows" class="manual-spec-rows"></div>
             </div>
             <div id="addSubSpecPrompt" class="span-2 add-sub-spec-prompt">
               <button id="enableSubSpecBtn" class="ghost" type="button">添加子规格</button>
               <span class="subtle">只有需要颜色 + 尺码等组合时才添加</span>
             </div>
             <div class="span-2 variant-stock-field">
-              <div class="field-head"><span>规格组合初始库存</span><span class="subtle">每个组合单独填写数量</span></div>
+              <div class="field-head"><span>规格组合</span><span class="subtle">规格图片会自动以小图显示</span></div>
               <div id="variantStockRows" class="variant-stock-rows"></div>
             </div>
             <label><span>低库存阈值</span><input id="lowStock" type="number" min="0" value="5" required /></label>
