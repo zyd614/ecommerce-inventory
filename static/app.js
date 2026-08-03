@@ -163,9 +163,19 @@ function renderVariantStockRows(stocks = collectVariantStocks()) {
     const key = variantKey(variant);
     row.dataset.variantKey = key;
     row.innerHTML = `
-      <div class="variant-stock-identity">${variantEditorImageMarkup(key)}<span>${escapeHtml(variantLabel(variant))}</span></div>
+      <div class="variant-stock-identity"><span>${escapeHtml(variantLabel(variant))}</span></div>
       <label class="variant-quantity-field"><span>初始库存</span><input type="number" min="0" data-variant-key="${escapeHtml(key)}" value="${Number(stocks[key] || 0)}" /></label>
-      <label class="variant-image-field"><span>规格图片</span><input type="file" accept="image/*" data-variant-image-key="${escapeHtml(key)}" /></label>`;
+      <div class="variant-image-field">
+        <span>规格图片</span>
+        <div class="variant-image-zone" tabindex="0" data-variant-image-key="${escapeHtml(key)}">
+          <div class="variant-image-zone-copy">
+            <strong>选择文件或直接粘贴图片</strong>
+            <span>复制图片后在这里按 Ctrl+V</span>
+          </div>
+          ${variantEditorImageMarkup(key)}
+        </div>
+        <input type="file" accept="image/*" data-variant-image-key="${escapeHtml(key)}" />
+      </div>`;
     els.variantStockRows.appendChild(row);
   });
 }
@@ -291,6 +301,18 @@ els.variantStockRows.addEventListener("change", (event) => {
   const input = event.target.closest("input[data-variant-image-key]");
   if (input?.files[0]) setVariantImageFile(input.dataset.variantImageKey, input.files[0]);
 });
+els.variantStockRows.addEventListener("click", (event) => {
+  const zone = event.target.closest(".variant-image-zone");
+  if (zone && !event.target.closest("input")) zone.focus();
+});
+els.variantStockRows.addEventListener("paste", (event) => {
+  const zone = event.target.closest(".variant-image-zone");
+  const file = imageFromClipboard(event);
+  if (zone && file) {
+    event.preventDefault();
+    setVariantImageFile(zone.dataset.variantImageKey, file);
+  }
+});
 els.productForm.addEventListener("submit", async (event) => { event.preventDefault(); try { await api(els.productId.value ? `/api/products/${els.productId.value}` : "/api/products", { method: els.productId.value ? "PUT" : "POST", body: buildProductFormData() }); closeModal(els.productModal); resetProductForm(); await refreshAll(); } catch (error) { showAlert(error.message); } });
 els.cancelProductEdit.addEventListener("click", () => { closeModal(els.productModal); resetProductForm(); });
 els.productSearch.addEventListener("input", async () => { try { await refreshAll(); } catch (error) { showAlert(error.message); } });
@@ -305,7 +327,18 @@ els.productsTable.addEventListener("click", async (event) => {
 els.typeIn.addEventListener("click", () => setMovementType("in")); els.typeOut.addEventListener("click", () => setMovementType("out"));
 els.movementForm.addEventListener("submit", async (event) => { event.preventDefault(); try { await api("/api/movements", { method: "POST", body: JSON.stringify({ type: state.movementType, product_id: els.movementProduct.value, variant_id: els.movementVariant.value, quantity: els.quantity.value, happened_at: els.happenedAt.value, unit_price: els.unitPrice.value, reference: els.reference.value, note: els.movementNote.value }) }); closeModal(els.movementModal); await refreshAll(); } catch (error) { showAlert(error.message); } });
 document.addEventListener("click", (event) => { if (event.target.closest("[data-close-modal]") || event.target.classList.contains("modal-backdrop")) closeAllModals(); });
-document.addEventListener("paste", (event) => { if (els.productModal.classList.contains("hidden")) return; const file = imageFromClipboard(event); if (file) { event.preventDefault(); setProductImageFile(file); } });
+document.addEventListener("paste", (event) => {
+  if (els.productModal.classList.contains("hidden")) return;
+  const file = imageFromClipboard(event);
+  if (!file) return;
+  const zone = event.target.closest?.(".variant-image-zone");
+  event.preventDefault();
+  if (zone) {
+    setVariantImageFile(zone.dataset.variantImageKey, file);
+    return;
+  }
+  setProductImageFile(file);
+});
 document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeAllModals(); });
 
 async function boot() {

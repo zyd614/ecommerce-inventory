@@ -385,6 +385,44 @@ input[readonly] {
   font-size: 11px;
 }
 
+.variant-image-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 66px;
+  padding: 8px 10px;
+  border: 1px dashed #aebbc2;
+  border-radius: 6px;
+  background: #fafcfc;
+  cursor: text;
+}
+
+.variant-image-zone:focus {
+  outline: 2px solid rgba(18, 106, 103, 0.18);
+  border-color: var(--primary);
+}
+
+.variant-image-zone-copy {
+  min-width: 0;
+}
+
+.variant-image-zone-copy strong,
+.variant-image-zone-copy span {
+  display: block;
+}
+
+.variant-image-zone-copy strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.variant-image-zone-copy span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
 .variant-upload-preview {
   width: 44px;
   height: 44px;
