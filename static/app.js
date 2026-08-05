@@ -345,12 +345,12 @@ function renderProducts() {
       group.variants.forEach((variant, groupRowIndex) => {
         const isLow = Number(variant.stock) <= Number(product.low_stock_threshold);
         const tr = document.createElement("tr");
-        tr.className = [isLow ? "low-row" : "", groupRowIndex === 0 && groupIndex > 0 ? "main-spec-group-split" : "", productIndex % 2 ? "product-group-alt" : ""].filter(Boolean).join(" ");
+        tr.className = [isLow ? "low-row" : "", groupRowIndex === 0 && groupIndex > 0 ? "main-spec-group-split" : "", productRowIndex === 0 ? "product-group-first" : "", productRowIndex === variants.length - 1 ? "product-group-last" : "", productIndex % 2 ? "product-group-alt" : ""].filter(Boolean).join(" ");
         const productCell = productRowIndex === 0 ? `
           <td class="product-group-cell" rowspan="${variants.length}">
             <div class="product-main">${productImageMarkup(product)}<div><div class="product-name">${escapeHtml(product.name)}</div><div class="sku">${escapeHtml(product.sku)}</div><div class="subtle">${escapeHtml(product.note || "")}</div></div></div>
             <div class="product-total">商品总库存 <strong>${formatNumber(product.stock)}${escapeHtml(product.unit)}</strong></div>
-            <div class="row-actions product-actions"><button class="ghost" type="button" data-action="edit-product" data-id="${product.id}">编辑商品</button><button class="danger" type="button" data-action="delete-product" data-id="${product.id}">删除商品</button></div>
+            <div class="row-actions product-actions"><button class="ghost sort-button" type="button" data-action="move-product" data-direction="up" data-id="${product.id}" title="商品上移" aria-label="商品上移">↑</button><button class="ghost sort-button" type="button" data-action="move-product" data-direction="down" data-id="${product.id}" title="商品下移" aria-label="商品下移">↓</button><button class="ghost" type="button" data-action="edit-product" data-id="${product.id}">编辑商品</button><button class="danger" type="button" data-action="delete-product" data-id="${product.id}">删除商品</button></div>
           </td>` : "";
         const mainSpecCell = groupRowIndex === 0 ? `
           <td class="main-spec-group-cell" rowspan="${group.variants.length}">
@@ -486,6 +486,13 @@ els.productSearch.addEventListener("input", async () => { try { await refreshAll
 els.movementProduct.addEventListener("change", () => renderVariantOptions());
 els.productsTable.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-action]"); if (!button) return; const product = productById(button.dataset.id); if (!product) return;
+  if (button.dataset.action === "move-product") {
+    try {
+      await api(`/api/products/${product.id}/position`, { method: "PATCH", body: JSON.stringify({ direction: button.dataset.direction }) });
+      await refreshAll();
+    } catch (error) { showAlert(error.message); }
+    return;
+  }
   if (button.dataset.action === "edit-product") editProduct(product);
   if (button.dataset.action === "stock-in") prepareMovement(product, "in", button.dataset.variantId);
   if (button.dataset.action === "stock-out") prepareMovement(product, "out", button.dataset.variantId);

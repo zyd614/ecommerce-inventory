@@ -50,6 +50,7 @@ def init_db():
                 specs_json TEXT NOT NULL DEFAULT '[]',
                 main_spec_name TEXT NOT NULL DEFAULT '',
                 sub_spec_name TEXT NOT NULL DEFAULT '',
+                sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -75,6 +76,7 @@ def init_db():
                 sub_spec TEXT NOT NULL DEFAULT '',
                 variant_key TEXT NOT NULL,
                 image_filename TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(product_id, variant_key),
@@ -100,6 +102,16 @@ def init_db():
             db.execute("ALTER TABLE products ADD COLUMN main_spec_name TEXT NOT NULL DEFAULT ''")
         if "sub_spec_name" not in columns:
             db.execute("ALTER TABLE products ADD COLUMN sub_spec_name TEXT NOT NULL DEFAULT ''")
+        if "sort_order" not in columns:
+            db.execute("ALTER TABLE products ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+            product_ids = db.execute(
+                "SELECT id FROM products ORDER BY updated_at DESC, id DESC"
+            ).fetchall()
+            for sort_order, row in enumerate(product_ids):
+                db.execute(
+                    "UPDATE products SET sort_order = ? WHERE id = ?",
+                    (sort_order, row["id"]),
+                )
         movement_columns = {row["name"] for row in db.execute("PRAGMA table_info(movements)").fetchall()}
         if "variant_id" not in movement_columns:
             db.execute("ALTER TABLE movements ADD COLUMN variant_id INTEGER")
@@ -107,6 +119,8 @@ def init_db():
         variant_columns = {row["name"] for row in db.execute("PRAGMA table_info(product_variants)").fetchall()}
         if "image_filename" not in variant_columns:
             db.execute("ALTER TABLE product_variants ADD COLUMN image_filename TEXT")
+        if "is_active" not in variant_columns:
+            db.execute("ALTER TABLE product_variants ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
         migrate_legacy_variants(db)
 
 
@@ -253,7 +267,7 @@ def variant_rows(db, product_id):
             COALESCE(SUM(CASE WHEN m.type = 'in' THEN m.quantity ELSE -m.quantity END), 0) AS stock
         FROM product_variants v
         LEFT JOIN movements m ON m.variant_id = v.id
-        WHERE v.product_id = ?
+        WHERE v.product_id = ? AND v.is_active = 1
         GROUP BY v.id
         ORDER BY v.id
         """,
@@ -465,10 +479,10 @@ def product_listing(db, where="", params=()):
         SELECT
             p.id, p.sku, p.name, p.unit, p.low_stock_threshold, p.note,
             p.image_filename, p.specs_json, p.main_spec_name, p.sub_spec_name,
-            p.created_at, p.updated_at
+            p.sort_order, p.created_at, p.updated_at
         FROM products p
         {where}
-        ORDER BY p.updated_at DESC, p.id DESC
+        ORDER BY p.sort_order ASC, p.id DESC
         """,
         params,
     ).fetchall()
@@ -560,6 +574,7 @@ def summary():
                     FROM product_variants v
                     JOIN products p ON p.id = v.product_id
                     LEFT JOIN movements m ON m.variant_id = v.id
+                    WHERE v.is_active = 1
                     GROUP BY v.id
                 ) WHERE qty <= low_stock_threshold) AS low_stock_count
             """
@@ -576,12 +591,46 @@ def list_products():
             like = f"%{query}%"
             products = product_listing(
                 db,
-                "WHERE p.sku LIKE ? OR p.name LIKE ? OR p.specs_json LIKE ? OR EXISTS (SELECT 1 FROM product_variants v WHERE v.product_id = p.id AND (v.main_spec LIKE ? OR v.sub_spec LIKE ?))",
+                "WHERE p.sku LIKE ? OR p.name LIKE ? OR p.specs_json LIKE ? OR EXISTS (SELECT 1 FROM product_variants v WHERE v.product_id = p.id AND v.is_active = 1 AND (v.main_spec LIKE ? OR v.sub_spec LIKE ?))",
                 (like, like, like, like, like),
             )
         else:
             products = product_listing(db)
     return jsonify(products)
+
+
+@app.patch("/api/products/<int:product_id>/position")
+@require_auth
+def move_product(product_id):
+    payload = request.get_json(force=True, silent=True) or {}
+    direction = clean_text(payload.get("direction"))
+    if direction not in {"up", "down"}:
+        return jsonify({"error": "排序方向必须是 up 或 down"}), 400
+
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT id FROM products ORDER BY sort_order ASC, id DESC"
+        ).fetchall()
+        product_ids = [row["id"] for row in rows]
+        if product_id not in product_ids:
+            return jsonify({"error": "商品不存在"}), 404
+
+        current_index = product_ids.index(product_id)
+        target_index = current_index + (-1 if direction == "up" else 1)
+        if target_index < 0 or target_index >= len(product_ids):
+            return jsonify({"ok": True})
+
+        product_ids[current_index], product_ids[target_index] = (
+            product_ids[target_index],
+            product_ids[current_index],
+        )
+        for sort_order, item_id in enumerate(product_ids):
+            db.execute(
+                "UPDATE products SET sort_order = ? WHERE id = ?",
+                (sort_order, item_id),
+            )
+
+    return jsonify({"ok": True})
 
 
 @app.post("/api/products")
@@ -617,12 +666,15 @@ def create_product():
         with get_db() as db:
             sku = sku or next_sku(db)
             name = name or sku
+            next_sort_order = db.execute(
+                "SELECT COALESCE(MIN(sort_order), 0) - 1 AS value FROM products"
+            ).fetchone()["value"]
             cur = db.execute(
                 """
-                INSERT INTO products (sku, name, unit, low_stock_threshold, note, image_filename, specs_json, main_spec_name, sub_spec_name, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, '', '', CURRENT_TIMESTAMP)
+                INSERT INTO products (sku, name, unit, low_stock_threshold, note, image_filename, specs_json, main_spec_name, sub_spec_name, sort_order, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, '', '', ?, CURRENT_TIMESTAMP)
                 """,
-                (sku, name, unit, low_stock_threshold, note, image_filename, json.dumps(config, ensure_ascii=False)),
+                (sku, name, unit, low_stock_threshold, note, image_filename, json.dumps(config, ensure_ascii=False), next_sort_order),
             )
             product_id = cur.lastrowid
             for definition in variant_defs:
@@ -678,6 +730,61 @@ def update_product(product_id):
                     delete_product_image(filename)
                 return jsonify({"error": "商品不存在"}), 404
 
+
+            existing_variant_rows = db.execute(
+                "SELECT * FROM product_variants WHERE product_id = ? ORDER BY id",
+                (product_id,),
+            ).fetchall()
+            definitions_by_key = {
+                variant_key(item["main_spec"], item["sub_spec"]): item for item in variant_defs
+            }
+            assignments = {}
+            used_variant_ids = set()
+
+            for key in definitions_by_key:
+                exact_active = next(
+                    (row for row in existing_variant_rows if row["variant_key"] == key and row["is_active"]),
+                    None,
+                )
+                if exact_active:
+                    assignments[key] = exact_active
+                    used_variant_ids.add(exact_active["id"])
+
+            unmatched_keys = [key for key in definitions_by_key if key not in assignments]
+            unmatched_active = [
+                row for row in existing_variant_rows
+                if row["is_active"] and row["id"] not in used_variant_ids
+            ]
+            for key, row in zip(unmatched_keys, unmatched_active):
+                assignments[key] = row
+                used_variant_ids.add(row["id"])
+
+            unmatched_keys = [key for key in definitions_by_key if key not in assignments]
+            for key in unmatched_keys:
+                exact_inactive = next(
+                    (
+                        row for row in existing_variant_rows
+                        if row["variant_key"] == key and row["id"] not in used_variant_ids
+                    ),
+                    None,
+                )
+                if exact_inactive:
+                    assignments[key] = exact_inactive
+                    used_variant_ids.add(exact_inactive["id"])
+
+            stale_active = [
+                row for row in existing_variant_rows
+                if row["is_active"] and row["id"] not in used_variant_ids
+            ]
+            for row in stale_active:
+                if current_stock(db, product_id, row["id"]) != 0:
+                    for filename in saved_images:
+                        delete_product_image(filename)
+                    label = " / ".join(
+                        value for value in (row["main_spec"], row["sub_spec"]) if value and value != "default"
+                    ) or "默认规格"
+                    return jsonify({"error": f"规格 {label} 还有库存，请先将库存减到 0 再删除"}), 409
+
             sku = existing["sku"]
             name = name or sku
             image_filename = new_image_filename if new_image_filename else (None if remove_product_image else existing["image_filename"])
@@ -685,29 +792,55 @@ def update_product(product_id):
                 "UPDATE products SET name = ?, unit = ?, low_stock_threshold = ?, note = ?, image_filename = ?, specs_json = ?, main_spec_name = '', sub_spec_name = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (name, unit, low_stock_threshold, note, image_filename, json.dumps(config, ensure_ascii=False), product_id),
             )
-            existing_variants = {
-                row["variant_key"]: row
-                for row in db.execute("SELECT * FROM product_variants WHERE product_id = ?", (product_id,)).fetchall()
-            }
-            for definition in variant_defs:
-                key = variant_key(definition["main_spec"], definition["sub_spec"])
-                if key not in existing_variants:
+
+            desired_keys = set(definitions_by_key)
+            for row in existing_variant_rows:
+                if row["id"] not in used_variant_ids and row["variant_key"] in desired_keys:
                     db.execute(
-                        "INSERT INTO product_variants (product_id, main_spec, sub_spec, variant_key, image_filename) VALUES (?, ?, ?, ?, ?)",
-                        (product_id, definition["main_spec"], definition["sub_spec"], key, variant_images.get(key)),
+                        "UPDATE product_variants SET variant_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (f"archived:{row['id']}:{uuid.uuid4().hex}", row["id"]),
                     )
-                elif key in variant_images:
+            for key, row in assignments.items():
+                if row["variant_key"] != key:
+                    db.execute(
+                        "UPDATE product_variants SET variant_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (f"moving:{row['id']}:{uuid.uuid4().hex}", row["id"]),
+                    )
+
+            for key, definition in definitions_by_key.items():
+                row = assignments.get(key)
+                if row:
+                    db.execute(
+                        "UPDATE product_variants SET main_spec = ?, sub_spec = ?, variant_key = ?, is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (definition["main_spec"], definition["sub_spec"], key, row["id"]),
+                    )
+                else:
+                    cursor = db.execute(
+                        "INSERT INTO product_variants (product_id, main_spec, sub_spec, variant_key, is_active) VALUES (?, ?, ?, ?, 1)",
+                        (product_id, definition["main_spec"], definition["sub_spec"], key),
+                    )
+                    row = {"id": cursor.lastrowid, "image_filename": None}
+                    assignments[key] = row
+
+            for row in stale_active:
+                db.execute(
+                    "UPDATE product_variants SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (row["id"],),
+                )
+
+            for key, row in assignments.items():
+                if key in variant_images:
                     db.execute(
                         "UPDATE product_variants SET image_filename = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        (variant_images[key], existing_variants[key]["id"]),
+                        (variant_images[key], row["id"]),
                     )
-                    old_variant_images_to_delete.append(existing_variants[key]["image_filename"])
+                    old_variant_images_to_delete.append(row["image_filename"])
                 elif key in removed_variant_images:
                     db.execute(
                         "UPDATE product_variants SET image_filename = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        (existing_variants[key]["id"],),
+                        (row["id"],),
                     )
-                    old_variant_images_to_delete.append(existing_variants[key]["image_filename"])
+                    old_variant_images_to_delete.append(row["image_filename"])
             product = product_listing(db, "WHERE p.id = ?", (product_id,))[0]
     except sqlite3.IntegrityError:
         for filename in saved_images:
@@ -835,7 +968,7 @@ def create_movement():
             return jsonify({"error": "商品不存在"}), 404
 
         variant = db.execute(
-            "SELECT id, product_id, main_spec, sub_spec FROM product_variants WHERE id = ? AND product_id = ?",
+            "SELECT id, product_id, main_spec, sub_spec FROM product_variants WHERE id = ? AND product_id = ? AND is_active = 1",
             (variant_id, product_id),
         ).fetchone()
         if not variant:
