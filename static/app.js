@@ -318,6 +318,12 @@ function renderProducts() {
 
   let productIndex = 0;
   for (const product of state.products) {
+    if (productIndex > 0) {
+      const separator = document.createElement("tr");
+      separator.className = "product-separator-row";
+      separator.innerHTML = `<td colspan="6" aria-hidden="true"></td>`;
+      els.productsTable.appendChild(separator);
+    }
     const variants = product.variants?.length
       ? product.variants
       : [{ id: "", main_spec: "", sub_spec: "default", stock: product.stock, total_in: product.total_in, total_out: product.total_out }];
@@ -339,7 +345,7 @@ function renderProducts() {
       group.variants.forEach((variant, groupRowIndex) => {
         const isLow = Number(variant.stock) <= Number(product.low_stock_threshold);
         const tr = document.createElement("tr");
-        tr.className = [isLow ? "low-row" : "", groupRowIndex === 0 && groupIndex > 0 ? "main-spec-group-split" : "", productRowIndex === 0 && productIndex > 0 ? "product-group-split" : "", productIndex % 2 ? "product-group-alt" : ""].filter(Boolean).join(" ");
+        tr.className = [isLow ? "low-row" : "", groupRowIndex === 0 && groupIndex > 0 ? "main-spec-group-split" : "", productIndex % 2 ? "product-group-alt" : ""].filter(Boolean).join(" ");
         const productCell = productRowIndex === 0 ? `
           <td class="product-group-cell" rowspan="${variants.length}">
             <div class="product-main">${productImageMarkup(product)}<div><div class="product-name">${escapeHtml(product.name)}</div><div class="sku">${escapeHtml(product.sku)}</div><div class="subtle">${escapeHtml(product.note || "")}</div></div></div>
