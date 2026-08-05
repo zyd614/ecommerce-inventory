@@ -50,6 +50,9 @@ git checkout main
 git pull --ff-only origin main
 chmod +x scripts/deploy.sh scripts/install-auto-update.sh
 
+mkdir -p data/backups
+cp -a data/inventory.db "data/backups/inventory-before-auto-update-install-$(date +%Y%m%d-%H%M%S).db"
+
 docker compose config --quiet
 docker compose up -d --build --force-recreate --remove-orphans
 
