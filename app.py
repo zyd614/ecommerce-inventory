@@ -122,6 +122,7 @@ def init_db():
         if "is_active" not in variant_columns:
             db.execute("ALTER TABLE product_variants ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
         migrate_legacy_variants(db)
+        repair_legacy_variant_sync(db)
 
 
 @app.before_request
@@ -236,6 +237,86 @@ def migrate_legacy_variants(db):
             "UPDATE movements SET variant_id = ? WHERE product_id = ? AND variant_id IS NULL",
             (cur.lastrowid, product["id"]),
         )
+
+
+def repair_legacy_variant_sync(db):
+    marker_key = "variant_sync_repair_v1"
+    if db.execute("SELECT 1 FROM app_settings WHERE key = ?", (marker_key,)).fetchone():
+        return
+
+    products = db.execute("SELECT id, specs_json FROM products ORDER BY id").fetchall()
+    for product in products:
+        config = parse_variant_config(product["specs_json"])
+        if not config["main_values"] and not config["sub_values"]:
+            continue
+
+        definitions = build_variant_defs(config)
+        desired_keys = [variant_key(item["main_spec"], item["sub_spec"]) for item in definitions]
+        rows = db.execute(
+            "SELECT * FROM product_variants WHERE product_id = ? ORDER BY id",
+            (product["id"],),
+        ).fetchall()
+        rows_by_key = {row["variant_key"]: row for row in rows}
+
+        targets = []
+        for definition, key in zip(definitions, desired_keys):
+            row = rows_by_key.get(key)
+            if row is None:
+                cursor = db.execute(
+                    "INSERT INTO product_variants (product_id, main_spec, sub_spec, variant_key, is_active) VALUES (?, ?, ?, ?, 1)",
+                    (product["id"], definition["main_spec"], definition["sub_spec"], key),
+                )
+                row = {
+                    "id": cursor.lastrowid,
+                    "image_filename": None,
+                    "variant_key": key,
+                }
+            else:
+                db.execute(
+                    "UPDATE product_variants SET main_spec = ?, sub_spec = ?, is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (definition["main_spec"], definition["sub_spec"], row["id"]),
+                )
+            targets.append(row)
+
+        if not targets:
+            continue
+
+        stale_rows = [row for row in rows if row["variant_key"] not in desired_keys]
+        target_index = 0
+        for stale in stale_rows:
+            movement_count = db.execute(
+                "SELECT COUNT(*) AS count FROM movements WHERE variant_id = ?",
+                (stale["id"],),
+            ).fetchone()["count"]
+            if movement_count:
+                target = targets[target_index % len(targets)]
+                db.execute(
+                    "UPDATE movements SET variant_id = ? WHERE variant_id = ?",
+                    (target["id"], stale["id"]),
+                )
+                if stale["image_filename"] and not target["image_filename"]:
+                    db.execute(
+                        "UPDATE product_variants SET image_filename = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (stale["image_filename"], target["id"]),
+                    )
+                    target = dict(target)
+                    target["image_filename"] = stale["image_filename"]
+                    targets[target_index % len(targets)] = target
+                target_index += 1
+            db.execute(
+                "UPDATE product_variants SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (stale["id"],),
+            )
+
+        db.execute(
+            "UPDATE movements SET variant_id = ? WHERE product_id = ? AND variant_id IS NULL",
+            (targets[0]["id"], product["id"]),
+        )
+
+    db.execute(
+        "INSERT INTO app_settings (key, value, updated_at) VALUES (?, 'done', CURRENT_TIMESTAMP)",
+        (marker_key,),
+    )
 
 
 def row_to_dict(row):
