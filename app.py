@@ -240,10 +240,6 @@ def migrate_legacy_variants(db):
 
 
 def repair_legacy_variant_sync(db):
-    marker_key = "variant_sync_repair_v1"
-    if db.execute("SELECT 1 FROM app_settings WHERE key = ?", (marker_key,)).fetchone():
-        return
-
     products = db.execute("SELECT id, specs_json FROM products ORDER BY id").fetchall()
     for product in products:
         config = parse_variant_config(product["specs_json"])
@@ -256,6 +252,24 @@ def repair_legacy_variant_sync(db):
             "SELECT * FROM product_variants WHERE product_id = ? ORDER BY id",
             (product["id"],),
         ).fetchall()
+        active_keys = [row["variant_key"] for row in rows if row["is_active"]]
+        has_unassigned_movements = db.execute(
+            "SELECT 1 FROM movements WHERE product_id = ? AND variant_id IS NULL LIMIT 1",
+            (product["id"],),
+        ).fetchone()
+        marker_key = f"variant_sync_repair_v2:{product['id']}"
+        marker = db.execute(
+            "SELECT value FROM app_settings WHERE key = ?",
+            (marker_key,),
+        ).fetchone()
+        if (
+            marker
+            and marker["value"] == product["specs_json"]
+            and set(active_keys) == set(desired_keys)
+            and not has_unassigned_movements
+        ):
+            continue
+
         rows_by_key = {row["variant_key"]: row for row in rows}
 
         targets = []
@@ -312,11 +326,14 @@ def repair_legacy_variant_sync(db):
             "UPDATE movements SET variant_id = ? WHERE product_id = ? AND variant_id IS NULL",
             (targets[0]["id"], product["id"]),
         )
-
-    db.execute(
-        "INSERT INTO app_settings (key, value, updated_at) VALUES (?, 'done', CURRENT_TIMESTAMP)",
-        (marker_key,),
-    )
+        db.execute(
+            """
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+            """,
+            (marker_key, product["specs_json"]),
+        )
 
 
 def row_to_dict(row):
