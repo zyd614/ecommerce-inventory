@@ -95,8 +95,11 @@
             <div class="span-2 image-field">
               <label><span>商品图片</span><input id="productImage" type="file" accept="image/*" /></label>
               <div id="imagePasteZone" class="image-paste-zone" tabindex="0">
-                <div><strong id="imagePasteText">选择文件或直接粘贴图片</strong><span>复制商品图后，在这里按 Ctrl+V</span></div>
-                <img id="imagePreview" class="image-preview hidden" alt="商品图片预览" />
+                <div><strong id="imagePasteText">选择文件或直接粘贴图片</strong><span>复制商品图后，在这里按 Ctrl+V；再次粘贴会替换</span></div>
+                <div class="image-preview-actions">
+                  <img id="imagePreview" class="image-preview hidden" alt="商品图片预览" />
+                  <button id="removeProductImageBtn" class="danger small-btn hidden" type="button">删除图片</button>
+                </div>
               </div>
             </div>
             <label><span>商品名称</span><input id="name" placeholder="不填则使用 SKU" /></label>

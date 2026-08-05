@@ -297,6 +297,18 @@ input[readonly] {
   font-size: 12px;
 }
 
+.image-preview-actions,
+.variant-preview-actions {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+
+.image-preview-actions button,
+.variant-preview-actions button {
+  min-height: 28px;
+}
+
 .image-preview {
   width: 76px;
   height: 76px;
@@ -571,6 +583,18 @@ input[readonly] {
   border-top: 3px solid #9db8b6;
 }
 
+.product-group-split > td {
+  border-top: 6px solid #66777e;
+}
+
+.product-group-alt > td:not(.product-group-cell) {
+  background-color: #f7faf9;
+}
+
+.product-group-alt > .main-spec-group-cell {
+  background-color: #e4f1ef;
+}
+
 .sub-spec-cell {
   background: #fcfdfd;
 }
@@ -608,9 +632,9 @@ input[readonly] {
 }
 
 .variant-thumb {
-  width: 44px;
-  height: 44px;
-  flex: 0 0 44px;
+  width: 68px;
+  height: 68px;
+  flex: 0 0 68px;
   border: 1px solid var(--line);
   border-radius: 5px;
   object-fit: cover;

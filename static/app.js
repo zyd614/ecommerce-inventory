@@ -4,9 +4,12 @@ const state = {
   authenticated: false,
   productImageFile: null,
   productImagePreviewUrl: null,
+  productExistingImageUrl: null,
+  productImageRemoved: false,
   variantImageFiles: new Map(),
   variantImagePreviewUrls: new Map(),
   variantExistingImages: new Map(),
+  variantRemovedImages: new Set(),
   imageProcessingCount: 0,
 };
 
@@ -17,7 +20,7 @@ const els = {
   metricProducts: $("#metricProducts"), metricStock: $("#metricStock"), metricIn: $("#metricIn"), metricOut: $("#metricOut"), metricLow: $("#metricLow"),
   productSearch: $("#productSearch"), productsTable: $("#productsTable"), productModal: $("#productModal"), productModalTitle: $("#productModalTitle"),
   productForm: $("#productForm"), productId: $("#productId"), sku: $("#sku"), initialStockLabel: $("#initialStockLabel"), initialStock: $("#initialStock"), passwordModal: $("#passwordModal"), passwordForm: $("#passwordForm"), currentPassword: $("#currentPassword"), newPassword: $("#newPassword"), confirmPassword: $("#confirmPassword"),
-  productImage: $("#productImage"), imagePasteZone: $("#imagePasteZone"), imagePasteText: $("#imagePasteText"), imagePreview: $("#imagePreview"),
+  productImage: $("#productImage"), imagePasteZone: $("#imagePasteZone"), imagePasteText: $("#imagePasteText"), imagePreview: $("#imagePreview"), removeProductImageBtn: $("#removeProductImageBtn"),
   name: $("#name"), unit: $("#unit"), mainSpecRows: $("#mainSpecRows"), subSpecRows: $("#subSpecRows"),
   addMainSpecValueBtn: $("#addMainSpecValueBtn"), addSubSpecValueBtn: $("#addSubSpecValueBtn"), enableSubSpecBtn: $("#enableSubSpecBtn"), disableSubSpecBtn: $("#disableSubSpecBtn"), subSpecSection: $("#subSpecSection"), addSubSpecPrompt: $("#addSubSpecPrompt"),
   variantStockRows: $("#variantStockRows"), lowStock: $("#lowStock"), productHappenedAt: $("#productHappenedAt"), productNote: $("#productNote"),
@@ -100,15 +103,33 @@ function setMovementType(type) {
   els.unitPrice.parentElement.style.display = type === "in" ? "grid" : "none";
 }
 
-const IMAGE_TARGET_BYTES = 1.5 * 1024 * 1024;
-const IMAGE_MAX_SIDE = 2400;
+const IMAGE_TARGET_BYTES = 600 * 1024;
+const IMAGE_MAX_SIDE = 1600;
 
-function updateImagePreview(file) {
+function updateImagePreview(file, fallbackUrl = state.productExistingImageUrl) {
   if (state.productImagePreviewUrl) URL.revokeObjectURL(state.productImagePreviewUrl);
-  if (!file) {
-    state.productImagePreviewUrl = null; els.imagePreview.removeAttribute("src"); els.imagePreview.classList.add("hidden"); els.imagePasteText.textContent = "选择文件或直接粘贴图片"; return;
+  state.productImagePreviewUrl = file ? URL.createObjectURL(file) : null;
+  const previewUrl = state.productImagePreviewUrl || fallbackUrl;
+  if (!previewUrl) {
+    els.imagePreview.removeAttribute("src");
+    els.imagePreview.classList.add("hidden");
+    els.removeProductImageBtn.classList.add("hidden");
+    els.imagePasteText.textContent = "选择文件或直接粘贴图片";
+    return;
   }
-  state.productImagePreviewUrl = URL.createObjectURL(file); els.imagePreview.src = state.productImagePreviewUrl; els.imagePreview.classList.remove("hidden"); els.imagePasteText.textContent = file.name || "已粘贴图片";
+  els.imagePreview.src = previewUrl;
+  els.imagePreview.classList.remove("hidden");
+  els.removeProductImageBtn.classList.remove("hidden");
+  els.imagePasteText.textContent = file?.name || "已有商品图片";
+}
+function removeProductImage() {
+  state.productImageFile = null;
+  state.productExistingImageUrl = null;
+  state.productImageRemoved = true;
+  els.productImage.value = "";
+  updateImagePreview(null, null);
+  els.imagePasteZone.focus();
+  showAlert("商品图片已移除，保存后生效；现在仍可重新粘贴图片");
 }
 function setImageProcessing(active) {
   state.imageProcessingCount = Math.max(0, state.imageProcessingCount + (active ? 1 : -1));
@@ -151,7 +172,7 @@ async function prepareImageForUpload(file) {
       canvas.height = height;
       context.clearRect(0, 0, width, height);
       context.drawImage(source, 0, 0, width, height);
-      for (const quality of [0.86, 0.76, 0.66, 0.56]) {
+      for (const quality of [0.82, 0.7, 0.58, 0.46]) {
         const blob = await canvasToBlob(canvas, "image/webp", quality);
         if (!smallestBlob || blob.size < smallestBlob.size) smallestBlob = blob;
         if (blob.size <= IMAGE_TARGET_BYTES) return new File([blob], `${file.name.replace(/\.[^.]+$/, "") || "image"}.webp`, { type: "image/webp", lastModified: Date.now() });
@@ -171,6 +192,7 @@ async function setProductImageFile(file) {
   try {
     const uploadFile = await prepareImageForUpload(file);
     state.productImageFile = uploadFile;
+    state.productImageRemoved = false;
     try { const transfer = new DataTransfer(); transfer.items.add(uploadFile); els.productImage.files = transfer.files; } catch { els.productImage.value = ""; }
     updateImagePreview(uploadFile);
     showAlert(file.size > uploadFile.size ? "商品图片已自动压缩" : "");
@@ -214,12 +236,29 @@ function clearVariantImageState() {
   state.variantImageFiles.clear();
   state.variantImagePreviewUrls.clear();
   state.variantExistingImages.clear();
+  state.variantRemovedImages.clear();
 }
 function variantEditorImageMarkup(key) {
   const previewUrl = state.variantImagePreviewUrls.get(key) || state.variantExistingImages.get(key);
   return previewUrl
     ? `<img class="variant-upload-preview" src="${escapeHtml(previewUrl)}" alt="规格图片预览" />`
     : `<div class="variant-upload-preview variant-upload-empty">暂无图片</div>`;
+}
+function focusVariantImageZone(key) {
+  const zone = [...els.variantStockRows.querySelectorAll(".variant-image-zone")].find((item) => item.dataset.variantImageKey === key);
+  zone?.focus();
+}
+function removeVariantImage(key) {
+  const previewUrl = state.variantImagePreviewUrls.get(key);
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  state.variantImageFiles.delete(key);
+  state.variantImagePreviewUrls.delete(key);
+  state.variantExistingImages.delete(key);
+  state.variantRemovedImages.add(key);
+  const stocks = collectVariantStocks();
+  renderVariantStockRows(stocks);
+  requestAnimationFrame(() => focusVariantImageZone(key));
+  showAlert("规格图片已移除，保存后生效；现在仍可重新粘贴图片");
 }
 function renderVariantStockRows(stocks = collectVariantStocks()) {
   const defs = previewVariantDefs(variantConfigFromInputs());
@@ -237,9 +276,9 @@ function renderVariantStockRows(stocks = collectVariantStocks()) {
         <div class="variant-image-zone" tabindex="0" data-variant-image-key="${escapeHtml(key)}">
           <div class="variant-image-zone-copy">
             <strong>选择文件或直接粘贴图片</strong>
-            <span>复制图片后在这里按 Ctrl+V</span>
+            <span>按 Ctrl+V 粘贴；再次粘贴会替换</span>
           </div>
-          ${variantEditorImageMarkup(key)}
+          <div class="variant-preview-actions">${variantEditorImageMarkup(key)}<button class="danger small-btn ${state.variantImageFiles.has(key) || state.variantExistingImages.has(key) ? "" : "hidden"}" type="button" data-action="remove-variant-image" data-variant-image-key="${escapeHtml(key)}">删除图片</button></div>
         </div>
         <input type="file" accept="image/*" data-variant-image-key="${escapeHtml(key)}" />
       </div>`;
@@ -258,9 +297,12 @@ async function setVariantImageFile(key, file) {
     const oldUrl = state.variantImagePreviewUrls.get(key);
     if (oldUrl) URL.revokeObjectURL(oldUrl);
     state.variantImageFiles.set(key, uploadFile);
+    state.variantRemovedImages.delete(key);
     state.variantImagePreviewUrls.set(key, URL.createObjectURL(uploadFile));
-    renderVariantStockRows();
-    showAlert(file.size > uploadFile.size ? "规格图片已自动压缩" : "");
+    const stocks = collectVariantStocks();
+    renderVariantStockRows(stocks);
+    requestAnimationFrame(() => focusVariantImageZone(key));
+    showAlert(file.size > uploadFile.size ? "规格图片已自动压缩，可继续粘贴替换" : "规格图片已选择，可继续粘贴替换");
   } catch (error) {
     showAlert(error.message);
   } finally {
@@ -274,6 +316,7 @@ function renderProducts() {
     return;
   }
 
+  let productIndex = 0;
   for (const product of state.products) {
     const variants = product.variants?.length
       ? product.variants
@@ -296,7 +339,7 @@ function renderProducts() {
       group.variants.forEach((variant, groupRowIndex) => {
         const isLow = Number(variant.stock) <= Number(product.low_stock_threshold);
         const tr = document.createElement("tr");
-        tr.className = [isLow ? "low-row" : "", groupRowIndex === 0 && groupIndex > 0 ? "main-spec-group-split" : ""].filter(Boolean).join(" ");
+        tr.className = [isLow ? "low-row" : "", groupRowIndex === 0 && groupIndex > 0 ? "main-spec-group-split" : "", productRowIndex === 0 && productIndex > 0 ? "product-group-split" : "", productIndex % 2 ? "product-group-alt" : ""].filter(Boolean).join(" ");
         const productCell = productRowIndex === 0 ? `
           <td class="product-group-cell" rowspan="${variants.length}">
             <div class="product-main">${productImageMarkup(product)}<div><div class="product-name">${escapeHtml(product.name)}</div><div class="sku">${escapeHtml(product.sku)}</div><div class="subtle">${escapeHtml(product.note || "")}</div></div></div>
@@ -326,19 +369,21 @@ function renderProducts() {
         productRowIndex += 1;
       });
     });
+    productIndex += 1;
   }
 }
 function productImageMarkup(product) { return product.image_url ? `<img class="product-thumb" src="${escapeHtml(product.image_url)}" alt="${escapeHtml(product.sku)}" loading="lazy" />` : `<div class="product-thumb product-thumb-empty">${escapeHtml(product.sku.slice(0, 2).toUpperCase())}</div>`; }
 
 function resetProductForm() {
-  els.productId.value = ""; els.productForm.reset(); els.sku.value = ""; els.sku.placeholder = "系统自动生成"; state.productImageFile = null; updateImagePreview(null); clearVariantImageState();
+  els.productId.value = ""; els.productForm.reset(); els.sku.value = ""; els.sku.placeholder = "系统自动生成";
+  state.productImageFile = null; state.productExistingImageUrl = null; state.productImageRemoved = false; updateImagePreview(null, null); clearVariantImageState();
   els.initialStock.value = "0"; els.unit.value = "件"; els.lowStock.value = "5"; els.productHappenedAt.value = today(); els.productNote.value = "";
   els.mainSpecRows.innerHTML = ""; addManualSpecRow(els.mainSpecRows); els.subSpecRows.innerHTML = ""; setSubSpecEnabled(false); els.variantStockRows.innerHTML = `<p class="subtle">添加规格值后，会自动生成库存分支。</p>`; els.productModalTitle.textContent = "新品入库"; els.initialStockLabel.classList.remove("hidden"); els.cancelProductEdit.classList.add("hidden"); els.productSaveBtn.textContent = "保存并入库";
 }
 function openNewProduct() { resetProductForm(); openModal(els.productModal); els.name.focus(); }
 function editProduct(product) {
   const config = product.spec_config || { main_spec_name: product.main_spec_name || "", main_values: [], sub_spec_name: product.sub_spec_name || "", sub_values: [] };
-  els.productId.value = product.id; els.productModalTitle.textContent = "编辑商品"; els.sku.value = product.sku; els.name.value = product.name; els.unit.value = product.unit; els.lowStock.value = product.low_stock_threshold; els.productHappenedAt.value = today(); els.productNote.value = product.note || ""; els.productImage.value = ""; state.productImageFile = null; updateImagePreview(null);
+  els.productId.value = product.id; els.productModalTitle.textContent = "编辑商品"; els.sku.value = product.sku; els.name.value = product.name; els.unit.value = product.unit; els.lowStock.value = product.low_stock_threshold; els.productHappenedAt.value = today(); els.productNote.value = product.note || ""; els.productImage.value = ""; state.productImageFile = null; state.productExistingImageUrl = product.image_url || null; state.productImageRemoved = false; updateImagePreview(null, state.productExistingImageUrl);
   clearVariantImageState(); (product.variants || []).forEach((variant) => { if (variant.image_url) state.variantExistingImages.set(variantKey(variant), variant.image_url); });
   els.mainSpecRows.innerHTML = ""; (config.main_values || []).forEach((value) => addManualSpecRow(els.mainSpecRows, value)); if (!els.mainSpecRows.children.length) addManualSpecRow(els.mainSpecRows);
   els.subSpecRows.innerHTML = ""; (config.sub_values || []).forEach((value) => addManualSpecRow(els.subSpecRows, value)); els.subSpecSection.classList.toggle("hidden", !(config.sub_values || []).length); els.addSubSpecPrompt.classList.toggle("hidden", Boolean((config.sub_values || []).length)); renderVariantStockRows(Object.fromEntries((product.variants || []).map((variant) => [variantKey(variant), variant.stock])));
@@ -358,6 +403,7 @@ function buildProductFormData() {
   if (!els.productId.value) formData.append("initial_stock", els.initialStock.value);
   const imageFile = state.productImageFile || els.productImage.files[0];
   if (imageFile) formData.append("image", imageFile);
+  if (state.productImageRemoved) formData.append("remove_product_image", "1");
   const variantImageKeys = {};
   let index = 0;
   for (const [key, file] of state.variantImageFiles) {
@@ -366,6 +412,7 @@ function buildProductFormData() {
     formData.append(fieldName, file);
   }
   formData.append("variant_image_keys", JSON.stringify(variantImageKeys));
+  formData.append("remove_variant_images", JSON.stringify([...state.variantRemovedImages]));
   return formData;
 }
 els.loginForm.addEventListener("submit", async (event) => { event.preventDefault(); try { await api("/api/login", { method: "POST", body: JSON.stringify({ password: els.password.value }) }); state.authenticated = true; els.password.value = ""; showApp(); await refreshAll(); } catch (error) { showAlert(error.message); } });
@@ -382,8 +429,9 @@ els.passwordForm.addEventListener("submit", async (event) => {
 });
 els.newProductBtn.addEventListener("click", openNewProduct);
 els.productImage.addEventListener("change", () => { const file = els.productImage.files[0]; if (file) setProductImageFile(file); });
-els.imagePasteZone.addEventListener("click", () => els.imagePasteZone.focus());
-els.imagePasteZone.addEventListener("paste", (event) => { const file = imageFromClipboard(event); if (file) { event.preventDefault(); setProductImageFile(file); } });
+els.imagePasteZone.addEventListener("click", (event) => { if (!event.target.closest("button")) els.imagePasteZone.focus(); });
+els.removeProductImageBtn.addEventListener("click", removeProductImage);
+els.imagePasteZone.addEventListener("paste", (event) => { const file = imageFromClipboard(event); if (file) { event.preventDefault(); event.stopPropagation(); setProductImageFile(file); } });
 els.addMainSpecValueBtn.addEventListener("click", () => addManualSpecRow(els.mainSpecRows));
 els.enableSubSpecBtn.addEventListener("click", () => setSubSpecEnabled(true));
 els.disableSubSpecBtn.addEventListener("click", () => setSubSpecEnabled(false));
@@ -409,8 +457,13 @@ els.variantStockRows.addEventListener("change", (event) => {
   if (input?.files[0]) setVariantImageFile(input.dataset.variantImageKey, input.files[0]);
 });
 els.variantStockRows.addEventListener("click", (event) => {
+  const removeButton = event.target.closest("[data-action='remove-variant-image']");
+  if (removeButton) {
+    removeVariantImage(removeButton.dataset.variantImageKey);
+    return;
+  }
   const zone = event.target.closest(".variant-image-zone");
-  if (zone && !event.target.closest("input")) zone.focus();
+  if (zone && !event.target.closest("input, button")) zone.focus();
 });
 els.variantStockRows.addEventListener("paste", (event) => {
   const zone = event.target.closest(".variant-image-zone");

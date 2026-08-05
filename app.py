@@ -20,7 +20,7 @@ UPLOAD_DIR = os.environ.get("UPLOAD_DIR", os.path.join(BASE_DIR, "data", "upload
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "change-me")
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif"}
-MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "64"))
+MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "128"))
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -410,6 +410,17 @@ def parse_variant_image_fields(value, variant_defs):
     }
 
 
+def parse_variant_image_keys(value, variant_defs):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            value = []
+    if not isinstance(value, list):
+        return set()
+    valid_keys = {variant_key(item["main_spec"], item["sub_spec"]) for item in variant_defs}
+    return {clean_text(key) for key in value if clean_text(key) in valid_keys}
+
 def validate_image_fields(field_names):
     for field_name in field_names:
         image_extension(request.files.get(field_name))
@@ -645,6 +656,8 @@ def update_product(product_id):
     config = parse_variant_config(payload.get("variant_config"))
     variant_defs = build_variant_defs(config)
     image_fields = parse_variant_image_fields(payload.get("variant_image_keys"), variant_defs)
+    remove_product_image = clean_text(payload.get("remove_product_image")) == "1"
+    removed_variant_images = parse_variant_image_keys(payload.get("remove_variant_images"), variant_defs)
 
     try:
         low_stock_threshold = parse_int(payload.get("low_stock_threshold", 0), "低库存阈值", 0)
@@ -667,7 +680,7 @@ def update_product(product_id):
 
             sku = existing["sku"]
             name = name or sku
-            image_filename = new_image_filename or existing["image_filename"]
+            image_filename = new_image_filename if new_image_filename else (None if remove_product_image else existing["image_filename"])
             db.execute(
                 "UPDATE products SET name = ?, unit = ?, low_stock_threshold = ?, note = ?, image_filename = ?, specs_json = ?, main_spec_name = '', sub_spec_name = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (name, unit, low_stock_threshold, note, image_filename, json.dumps(config, ensure_ascii=False), product_id),
@@ -689,18 +702,23 @@ def update_product(product_id):
                         (variant_images[key], existing_variants[key]["id"]),
                     )
                     old_variant_images_to_delete.append(existing_variants[key]["image_filename"])
+                elif key in removed_variant_images:
+                    db.execute(
+                        "UPDATE product_variants SET image_filename = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (existing_variants[key]["id"],),
+                    )
+                    old_variant_images_to_delete.append(existing_variants[key]["image_filename"])
             product = product_listing(db, "WHERE p.id = ?", (product_id,))[0]
     except sqlite3.IntegrityError:
         for filename in saved_images:
             delete_product_image(filename)
         return jsonify({"error": "保存失败，请检查商品数据或 SKU"}), 409
 
-    if new_image_filename:
+    if new_image_filename or remove_product_image:
         delete_product_image(existing["image_filename"])
     for filename in old_variant_images_to_delete:
         delete_product_image(filename)
     return jsonify(product)
-
 
 @app.delete("/api/products/<int:product_id>")
 @require_auth
