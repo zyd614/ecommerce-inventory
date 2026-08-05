@@ -4,12 +4,12 @@ services:
     container_name: ecommerce-inventory
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-8000}:8000"
     environment:
-      ADMIN_PASSWORD: "change-me"
-      SECRET_KEY: "change-this-random-secret"
-      DATABASE_PATH: "/app/data/inventory.db"
-      UPLOAD_DIR: "/app/data/uploads"
-      MAX_UPLOAD_MB: "128"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-change-me}"
+      SECRET_KEY: "${SECRET_KEY:-change-this-random-secret}"
+      DATABASE_PATH: "${DATABASE_PATH:-/app/data/inventory.db}"
+      UPLOAD_DIR: "${UPLOAD_DIR:-/app/data/uploads}"
+      MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-128}"
     volumes:
       - ./data:/app/data
