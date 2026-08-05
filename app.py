@@ -20,10 +20,11 @@ UPLOAD_DIR = os.environ.get("UPLOAD_DIR", os.path.join(BASE_DIR, "data", "upload
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "change-me")
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif"}
+MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "64"))
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
-app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_MB", "8")) * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 
 def get_db():
@@ -116,7 +117,7 @@ def ensure_schema():
 
 @app.errorhandler(RequestEntityTooLarge)
 def upload_too_large(_error):
-    return jsonify({"error": "图片太大，请上传 8MB 以内的图片"}), 413
+    return jsonify({"error": f"本次上传总大小超过 {MAX_UPLOAD_MB}MB，请减少同时上传的图片数量"}), 413
 
 
 def get_password_hash(db):

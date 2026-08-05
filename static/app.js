@@ -7,6 +7,7 @@ const state = {
   variantImageFiles: new Map(),
   variantImagePreviewUrls: new Map(),
   variantExistingImages: new Map(),
+  imageProcessingCount: 0,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -99,6 +100,9 @@ function setMovementType(type) {
   els.unitPrice.parentElement.style.display = type === "in" ? "grid" : "none";
 }
 
+const IMAGE_TARGET_BYTES = 1.5 * 1024 * 1024;
+const IMAGE_MAX_SIDE = 2400;
+
 function updateImagePreview(file) {
   if (state.productImagePreviewUrl) URL.revokeObjectURL(state.productImagePreviewUrl);
   if (!file) {
@@ -106,12 +110,75 @@ function updateImagePreview(file) {
   }
   state.productImagePreviewUrl = URL.createObjectURL(file); els.imagePreview.src = state.productImagePreviewUrl; els.imagePreview.classList.remove("hidden"); els.imagePasteText.textContent = file.name || "已粘贴图片";
 }
-function setProductImageFile(file) {
+function setImageProcessing(active) {
+  state.imageProcessingCount = Math.max(0, state.imageProcessingCount + (active ? 1 : -1));
+  els.productSaveBtn.disabled = state.imageProcessingCount > 0;
+}
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("图片压缩失败")), type, quality));
+}
+async function decodeImage(file) {
+  if ("createImageBitmap" in window) return createImageBitmap(file);
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = "async";
+    await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = () => reject(new Error("无法读取这张图片")); image.src = url; });
+    return image;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+async function prepareImageForUpload(file) {
+  if (!file?.type.startsWith("image/")) throw new Error("请选择图片文件");
+  const source = await decodeImage(file);
+  try {
+    const sourceWidth = source.naturalWidth || source.width;
+    const sourceHeight = source.naturalHeight || source.height;
+    if (!sourceWidth || !sourceHeight) throw new Error("无法读取图片尺寸");
+    if (file.size <= IMAGE_TARGET_BYTES && Math.max(sourceWidth, sourceHeight) <= IMAGE_MAX_SIDE) return file;
+
+    let scale = Math.min(1, IMAGE_MAX_SIDE / Math.max(sourceWidth, sourceHeight));
+    let width = Math.max(1, Math.round(sourceWidth * scale));
+    let height = Math.max(1, Math.round(sourceHeight * scale));
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d", { alpha: true });
+    if (!context) throw new Error("当前浏览器无法压缩图片");
+    let smallestBlob = null;
+
+    for (let pass = 0; pass < 4; pass += 1) {
+      canvas.width = width;
+      canvas.height = height;
+      context.clearRect(0, 0, width, height);
+      context.drawImage(source, 0, 0, width, height);
+      for (const quality of [0.86, 0.76, 0.66, 0.56]) {
+        const blob = await canvasToBlob(canvas, "image/webp", quality);
+        if (!smallestBlob || blob.size < smallestBlob.size) smallestBlob = blob;
+        if (blob.size <= IMAGE_TARGET_BYTES) return new File([blob], `${file.name.replace(/\.[^.]+$/, "") || "image"}.webp`, { type: "image/webp", lastModified: Date.now() });
+      }
+      width = Math.max(1, Math.round(width * 0.78));
+      height = Math.max(1, Math.round(height * 0.78));
+    }
+    return new File([smallestBlob], `${file.name.replace(/\.[^.]+$/, "") || "image"}.webp`, { type: "image/webp", lastModified: Date.now() });
+  } finally {
+    if (typeof source.close === "function") source.close();
+  }
+}
+async function setProductImageFile(file) {
   if (!file) return;
-  if (!file.type.startsWith("image/")) { showAlert("请上传或粘贴图片文件"); return; }
-  state.productImageFile = file;
-  try { const transfer = new DataTransfer(); transfer.items.add(file); els.productImage.files = transfer.files; } catch { els.productImage.value = ""; }
-  updateImagePreview(file); showAlert("");
+  setImageProcessing(true);
+  showAlert("正在自动压缩商品图片，请稍候...");
+  try {
+    const uploadFile = await prepareImageForUpload(file);
+    state.productImageFile = uploadFile;
+    try { const transfer = new DataTransfer(); transfer.items.add(uploadFile); els.productImage.files = transfer.files; } catch { els.productImage.value = ""; }
+    updateImagePreview(uploadFile);
+    showAlert(file.size > uploadFile.size ? "商品图片已自动压缩" : "");
+  } catch (error) {
+    showAlert(error.message);
+  } finally {
+    setImageProcessing(false);
+  }
 }
 function imageFromClipboard(event) { for (const item of event.clipboardData?.items || []) if (item.type.startsWith("image/")) return item.getAsFile(); return null; }
 
@@ -182,17 +249,23 @@ function renderVariantStockRows(stocks = collectVariantStocks()) {
 function collectVariantStocks() {
   return Object.fromEntries([...els.variantStockRows.querySelectorAll("input[data-variant-key]")].map((input) => [input.dataset.variantKey, input.value]));
 }
-function setVariantImageFile(key, file) {
-  if (!file || !file.type.startsWith("image/")) {
-    showAlert("规格图片只能上传图片文件");
-    return;
+async function setVariantImageFile(key, file) {
+  if (!file) return;
+  setImageProcessing(true);
+  showAlert("正在自动压缩规格图片，请稍候...");
+  try {
+    const uploadFile = await prepareImageForUpload(file);
+    const oldUrl = state.variantImagePreviewUrls.get(key);
+    if (oldUrl) URL.revokeObjectURL(oldUrl);
+    state.variantImageFiles.set(key, uploadFile);
+    state.variantImagePreviewUrls.set(key, URL.createObjectURL(uploadFile));
+    renderVariantStockRows();
+    showAlert(file.size > uploadFile.size ? "规格图片已自动压缩" : "");
+  } catch (error) {
+    showAlert(error.message);
+  } finally {
+    setImageProcessing(false);
   }
-  const oldUrl = state.variantImagePreviewUrls.get(key);
-  if (oldUrl) URL.revokeObjectURL(oldUrl);
-  state.variantImageFiles.set(key, file);
-  state.variantImagePreviewUrls.set(key, URL.createObjectURL(file));
-  renderVariantStockRows();
-  showAlert("");
 }
 function renderProducts() {
   els.productsTable.innerHTML = "";
@@ -308,7 +381,7 @@ els.passwordForm.addEventListener("submit", async (event) => {
   } catch (error) { showAlert(error.message); }
 });
 els.newProductBtn.addEventListener("click", openNewProduct);
-els.productImage.addEventListener("change", () => { const file = els.productImage.files[0]; state.productImageFile = file || null; updateImagePreview(file || null); });
+els.productImage.addEventListener("change", () => { const file = els.productImage.files[0]; if (file) setProductImageFile(file); });
 els.imagePasteZone.addEventListener("click", () => els.imagePasteZone.focus());
 els.imagePasteZone.addEventListener("paste", (event) => { const file = imageFromClipboard(event); if (file) { event.preventDefault(); setProductImageFile(file); } });
 els.addMainSpecValueBtn.addEventListener("click", () => addManualSpecRow(els.mainSpecRows));
@@ -344,10 +417,11 @@ els.variantStockRows.addEventListener("paste", (event) => {
   const file = imageFromClipboard(event);
   if (zone && file) {
     event.preventDefault();
+    event.stopPropagation();
     setVariantImageFile(zone.dataset.variantImageKey, file);
   }
 });
-els.productForm.addEventListener("submit", async (event) => { event.preventDefault(); try { await api(els.productId.value ? `/api/products/${els.productId.value}` : "/api/products", { method: els.productId.value ? "PUT" : "POST", body: buildProductFormData() }); closeModal(els.productModal); resetProductForm(); await refreshAll(); } catch (error) { showAlert(error.message); } });
+els.productForm.addEventListener("submit", async (event) => { event.preventDefault(); if (state.imageProcessingCount > 0) { showAlert("图片正在自动压缩，请稍候再保存"); return; } try { await api(els.productId.value ? `/api/products/${els.productId.value}` : "/api/products", { method: els.productId.value ? "PUT" : "POST", body: buildProductFormData() }); closeModal(els.productModal); resetProductForm(); await refreshAll(); } catch (error) { showAlert(error.message); } });
 els.cancelProductEdit.addEventListener("click", () => { closeModal(els.productModal); resetProductForm(); });
 els.productSearch.addEventListener("input", async () => { try { await refreshAll(); } catch (error) { showAlert(error.message); } });
 els.movementProduct.addEventListener("change", () => renderVariantOptions());
@@ -360,7 +434,7 @@ els.productsTable.addEventListener("click", async (event) => {
 });
 els.typeIn.addEventListener("click", () => setMovementType("in")); els.typeOut.addEventListener("click", () => setMovementType("out"));
 els.movementForm.addEventListener("submit", async (event) => { event.preventDefault(); try { await api("/api/movements", { method: "POST", body: JSON.stringify({ type: state.movementType, product_id: els.movementProduct.value, variant_id: els.movementVariant.value, quantity: els.quantity.value, happened_at: els.happenedAt.value, unit_price: els.unitPrice.value, reference: els.reference.value, note: els.movementNote.value }) }); closeModal(els.movementModal); await refreshAll(); } catch (error) { showAlert(error.message); } });
-document.addEventListener("click", (event) => { if (event.target.closest("[data-close-modal]") || event.target.classList.contains("modal-backdrop")) closeAllModals(); });
+document.addEventListener("click", (event) => { if (event.target.closest("[data-close-modal]")) closeAllModals(); });
 document.addEventListener("paste", (event) => {
   if (els.productModal.classList.contains("hidden")) return;
   const file = imageFromClipboard(event);
