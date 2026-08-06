@@ -945,6 +945,92 @@ tbody tr:hover {
   padding: 0 9px;
 }
 
+/* Keep the inventory list compact while leaving forms and history unchanged. */
+.products-table td {
+  padding: 9px 7px;
+  font-size: 12px;
+}
+
+.products-table .product-name {
+  font-size: 13px;
+}
+
+.products-table .product-thumb {
+  width: 69px;
+  height: 69px;
+  flex-basis: 69px;
+}
+
+.products-table .variant-thumb {
+  width: 54px;
+  height: 54px;
+  flex-basis: 54px;
+}
+
+.products-table .main-spec-value {
+  font-size: 12px;
+}
+
+.products-table .main-spec-count,
+.products-table .sku,
+.products-table .subtle,
+.products-table .sub-spec-empty {
+  font-size: 10px;
+}
+
+.products-table .sub-spec-value {
+  min-height: 19px;
+  padding: 0 6px;
+  font-size: 10px;
+}
+
+.products-table .variant-branch-cell {
+  gap: 7px;
+}
+
+.products-table .stock-count {
+  min-width: 66px;
+  min-height: 29px;
+  font-size: 19px;
+}
+
+.products-table .product-total {
+  margin-top: 11px;
+  padding-top: 8px;
+  font-size: 10px;
+}
+
+.products-table .product-total strong {
+  margin-top: 3px;
+  font-size: 14px;
+}
+
+.products-table .product-actions {
+  margin-top: 10px;
+}
+
+.products-table .row-actions {
+  gap: 5px;
+}
+
+.products-table .row-actions button {
+  min-height: 26px;
+  padding: 0 7px;
+  font-size: 12px;
+}
+
+.products-table .product-actions .sort-button {
+  width: 27px;
+  min-width: 27px;
+  font-size: 14px;
+}
+
+.products-table .product-separator-row,
+.products-table .product-separator-row:hover,
+.products-table .product-separator-row td {
+  height: 19px;
+}
+
 button.danger {
   color: var(--danger);
   background: #fff;
